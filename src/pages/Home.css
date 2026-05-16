@@ -47,6 +47,149 @@
     animation: feedbackPop 0.6s ease;
 }
 
+.feedback-overlay--error {
+    background: rgba(8, 17, 31, 0.84);
+    padding: 18px;
+}
+
+.feedback-card {
+    max-height: calc(100vh - 36px);
+    overflow: auto;
+    padding: 24px;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    /* border-left: 8px solid #dc2626; */
+    box-shadow: 0 24px 58px rgba(0, 0, 0, 0.32);
+    animation: feedbackPop 0.6s ease;
+}
+
+.feedback-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #b91c1c;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+.feedback-card-header ion-icon {
+    flex: 0 0 auto;
+    font-size: 16px;
+}
+
+.feedback-card h2 {
+    margin: 10px 0 18px;
+    color: #111827;
+    font-size: 28px;
+    font-weight: 900;
+    line-height: 1.12;
+}
+
+.feedback-command-box,
+.feedback-reason-box {
+    margin-top: 12px;
+    padding: 14px 16px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #f8fafc;
+    text-align: left;
+}
+
+.feedback-label {
+    display: block;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+.feedback-command-box code {
+    display: block;
+    margin-top: 6px;
+    color: #b91c1c;
+    font-size: 22px;
+    font-weight: 900;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.feedback-reason-box p {
+    margin: 6px 0 0;
+    color: #1f2937;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.3;
+}
+
+.feedback-status {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #ecfdf5;
+    color: #047857;
+    font-size: 17px;
+    font-weight: 900;
+    line-height: 1.25;
+    text-align: center;
+}
+
+.feedback-status.is-final {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.feedback-action {
+    margin-top: 18px;
+    --background: var(--color-primary);
+    --border-radius: 8px;
+    --box-shadow: none;
+    --color: #ffffff;
+    font-size: 16px;
+    font-weight: 900;
+    text-transform: none;
+}
+
+.feedback-status.is-final+.feedback-action {
+    --background: #dc2626;
+    --background-hover: #b91c1c;
+}
+
+@media (max-height: 520px) {
+    .feedback-card {
+        padding: 16px;
+    }
+
+    .feedback-card h2 {
+        margin-bottom: 12px;
+        font-size: 16px;
+    }
+
+    .feedback-command-box,
+    .feedback-reason-box {
+        margin-top: 8px;
+        padding: 10px 12px;
+    }
+
+    .feedback-command-box code {
+        font-size: 18px;
+    }
+
+    .feedback-reason-box p,
+    .feedback-status {
+        font-size: 12px;
+    }
+
+    .feedback-action {
+        margin-top: 12px;
+        font-size: 14px;
+    }
+}
+
 .summary-overlay {
     position: fixed;
     top: 0;
@@ -669,19 +812,27 @@ ion-icon {
     white-space: normal;
     box-shadow: 0 5px 14px rgba(15, 23, 42, 0.08);
     width: 95%;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
 }
 
-.pseudocode-slot.filled.advance code {
+.pseudocode-slot.filled.up code {
     border-color: #99f6e4;
     border-left-color: #0f766e;
 }
 
-.pseudocode-slot.filled.turn-left code {
+.pseudocode-slot.filled.down code {
     border-color: #fed7aa;
     border-left-color: #ea580c;
 }
 
-.pseudocode-slot.filled.turn-right code {
+.pseudocode-slot.filled.left code {
+    border-color: #d8b4fe;
+    border-left-color: #7c3aed;
+}
+
+.pseudocode-slot.filled.right code {
     border-color: #bfdbfe;
     border-left-color: #2563eb;
 }
@@ -689,6 +840,11 @@ ion-icon {
 .pseudocode-slot.filled.is-drag-over code {
     border-color: #0891b2;
     border-left-color: #0891b2;
+    transform: translateY(1px);
+}
+
+.pseudocode-slot.filled code:active {
+    cursor: grabbing;
 }
 
 .maze-tools-panel {
@@ -747,17 +903,22 @@ ion-icon {
     cursor: grabbing;
 }
 
-.maze-code-block.advance {
+.maze-code-block.up {
     border-color: #99f6e4;
     border-left-color: #0f766e;
 }
 
-.maze-code-block.turn-left {
+.maze-code-block.down {
     border-color: #fed7aa;
     border-left-color: #ea580c;
 }
 
-.maze-code-block.turn-right {
+.maze-code-block.left {
+    border-color: #d8b4fe;
+    border-left-color: #7c3aed;
+}
+
+.maze-code-block.right {
     border-color: #bfdbfe;
     border-left-color: #2563eb;
 }
@@ -790,6 +951,7 @@ input.maze-code-input {
     font-size: 11px;
     font-weight: 900;
     text-align: center;
+    cursor: text;
 }
 
 input.maze-code-input:focus {
@@ -875,8 +1037,8 @@ input.maze-code-input:focus {
     max-height: 100%;
     display: grid;
     position: relative;
-    gap: clamp(3px, 0.85vh, 7px);
-    padding: clamp(4px, 1vh, 8px);
+    gap: clamp(2px, 0.55vh, 5px);
+    padding: clamp(2px, 0.6vh, 5px);
     box-sizing: border-box;
     isolation: isolate;
     overflow: hidden;
@@ -968,15 +1130,31 @@ input.maze-code-input:focus {
     --cell-side: #92763a;
 }
 
-.maze-cell--empty,
 .maze-cell--wall {
     pointer-events: none;
 }
 
+.maze-cell--wall {
+    --cell-top: #8fa3ad;
+    --cell-border: #5f7580;
+    --cell-side: #3e5662;
+    --cell-shadow: rgba(30, 46, 54, 0.3);
+}
+
+.maze-cell--wall::before {
+    inset: 6% 4% 14%;
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 36%),
+        linear-gradient(90deg, rgba(15, 23, 42, 0.12), transparent 28%, rgba(15, 23, 42, 0.12) 70%),
+        var(--cell-top);
+}
+
+.maze-cell--empty {
+    pointer-events: none;
+}
+
 .maze-cell--empty::before,
-.maze-cell--empty::after,
-.maze-cell--wall::before,
-.maze-cell--wall::after {
+.maze-cell--empty::after {
     display: none;
 }
 
@@ -1009,7 +1187,8 @@ input.maze-code-input:focus {
     position: absolute;
     left: var(--maze-character-x, 50%);
     top: var(--maze-character-y, 50%);
-    width: min(calc(86% / var(--maze-cols, 7)), 86px);
+    width: min(calc(92% / var(--maze-cols, 7)), 88px);
+    aspect-ratio: 1 / 1;
     height: auto;
     object-fit: contain;
     image-rendering: auto;
@@ -1024,6 +1203,10 @@ input.maze-code-input:focus {
 
 .maze-character--left {
     --maze-character-flip: -1;
+}
+
+.maze-character--walking.maze-character--left {
+    --maze-character-flip: 1;
 }
 
 .maze-notice {

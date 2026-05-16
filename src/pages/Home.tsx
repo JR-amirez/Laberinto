@@ -30,6 +30,7 @@ import {
   type MazeExercise,
   type MazePosition,
 } from "../data/mazeLevels";
+import ARModal, { ARTipo } from "../components/ARModal";
 
 const lockLandscape = async () => {
   try {
@@ -86,6 +87,17 @@ type ConfettiPiece = {
   color: string;
 };
 
+type ARSeccionConfig = {
+  activo?: boolean;
+  fondo?: string;
+  contenido?: {
+    texto?: string;
+    imagen?: string;
+    audio?: string;
+    video?: string;
+  };
+};
+
 type LaberintoRuntimeConfig = {
   nivel?: string;
   autor?: string;
@@ -94,29 +106,42 @@ type LaberintoRuntimeConfig = {
   descripcion?: string;
   nombreApp?: string;
   plataformas?: string[];
+  ar?: {
+    inicio?: ARSeccionConfig;
+    acierto?: ARSeccionConfig;
+    fin?: ARSeccionConfig;
+  };
 };
 
 const MAZE_TOOL_BLOCKS = [
   {
-    id: "advance",
-    variable: "N",
-    command: "Avanzar N pasos;",
+    id: "up",
+    variable: "A",
+    command: "Arriba A lugares;",
+    direction: "up",
   },
   {
-    id: "turn-left",
-    variable: "L",
-    command: "Girar a la izquierda y avanzar L pasos;",
+    id: "down",
+    variable: "B",
+    command: "Abajo B lugares;",
+    direction: "down",
   },
   {
-    id: "turn-right",
-    variable: "R",
-    command: "Girar a la derecha y avanzar R pasos;",
+    id: "left",
+    variable: "I",
+    command: "Izquierda I lugares;",
+    direction: "left",
+  },
+  {
+    id: "right",
+    variable: "D",
+    command: "Derecha D lugares;",
+    direction: "right",
   },
 ] as const;
 
-const INITIAL_MAZE_SEQUENCE_SLOT_COUNT = 2;
+const INITIAL_MAZE_SEQUENCE_SLOT_COUNT = 1;
 const MAZE_STEP_DELAY_MS = 900;
-const MAZE_TURN_DELAY_MS = 760;
 const MAZE_JUMP_DELAY_MS = 900;
 const MAZE_RESULT_DELAY_MS = 1700;
 
@@ -125,8 +150,6 @@ type MazeToolBlock = (typeof MAZE_TOOL_BLOCKS)[number];
 type MazeCharacterAction =
   | "greeting"
   | "walking"
-  | "turn-right"
-  | "turn-left"
   | "jumping";
 type MazeCommand = {
   id: MazeToolId;
@@ -147,8 +170,11 @@ type MazeVisualPosition = {
 };
 
 type MazePointerDrag = {
+  type: "tool" | "sequence";
   toolId: MazeToolId;
+  command?: MazeCommand;
   pointerId: number;
+  sourceIndex?: number;
   startX: number;
   startY: number;
   x: number;
@@ -156,17 +182,44 @@ type MazePointerDrag = {
   active: boolean;
 };
 
+type MazeFeedback =
+  | {
+      type: "success";
+      message: string;
+    }
+  | {
+      type: "error";
+      commandText: string;
+      detail: string;
+      instructionNumber: number | null;
+      outOfAttempts: boolean;
+      status: string;
+    };
+
 const createEmptyMazeSequence = (): MazeSequenceSlot[] =>
   Array.from({ length: INITIAL_MAZE_SEQUENCE_SLOT_COUNT }, () => null);
 
+const getFilledMazeSequenceEntries = (sequence: MazeSequenceSlot[]) =>
+  sequence.reduce<Array<{ command: MazeCommand; slotIndex: number }>>(
+    (entries, slot, slotIndex) => {
+      if (slot !== null) {
+        entries.push({ command: slot, slotIndex });
+      }
+
+      return entries;
+    },
+    [],
+  );
+
 const ensureTrailingEmptyMazeSlot = (
   sequence: MazeSequenceSlot[],
-): MazeSequenceSlot[] =>
-  sequence.length === 0 || sequence[sequence.length - 1] !== null
-    ? [...sequence, null]
-    : sequence;
+): MazeSequenceSlot[] => [
+  ...getFilledMazeSequenceEntries(sequence).map(({ command }) => command),
+  null,
+];
 
-const MAZE_DIRECTIONS: MazeDirection[] = ["up", "right", "down", "left"];
+const compactMazeSequence = (sequence: MazeSequenceSlot[]) =>
+  ensureTrailingEmptyMazeSlot(sequence);
 
 const MAZE_DIRECTION_DELTAS: Record<MazeDirection, MazePosition> = {
   up: { row: -1, col: 0 },
@@ -176,12 +229,22 @@ const MAZE_DIRECTION_DELTAS: Record<MazeDirection, MazePosition> = {
 };
 
 const MAZE_CHARACTER_GIFS: Record<MazeCharacterAction, string> = {
-  greeting: "/assets/laberinto-saludando.gif",
-  walking: "/assets/laberinto-caminando.gif",
-  "turn-right": "/assets/laberinto-girando-derecha.gif",
-  "turn-left": "/assets/laberinto-girando-izquierda.gif",
-  jumping: "/assets/laberinto-brincando.gif",
+  greeting: "/assets/personaje_saludando.gif",
+  walking: "/assets/personaje_caminar_derecha.gif",
+  jumping: "/assets/personaje_brincando.gif",
 };
+
+const MAZE_WALKING_GIFS: Record<MazeDirection, string> = {
+  up: "/assets/personaje_caminar_arriba.gif",
+  right: "/assets/personaje_caminar_derecha.gif",
+  down: "/assets/personaje_caminar_abajo.gif",
+  left: "/assets/personaje_caminar_izquierda.gif",
+};
+
+const getMazeCharacterGif = (runtime: MazeRuntime) =>
+  runtime.action === "walking"
+    ? MAZE_WALKING_GIFS[runtime.direction]
+    : MAZE_CHARACTER_GIFS[runtime.action];
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -212,17 +275,6 @@ const getMazeVisualPositionForCell = (
 
 const getPositionKey = ({ row, col }: MazePosition) => `${row}:${col}`;
 
-const turnMazeDirection = (
-  direction: MazeDirection,
-  turn: "left" | "right",
-) => {
-  const currentIndex = MAZE_DIRECTIONS.indexOf(direction);
-  const offset = turn === "left" ? -1 : 1;
-  return MAZE_DIRECTIONS[
-    (currentIndex + offset + MAZE_DIRECTIONS.length) % MAZE_DIRECTIONS.length
-  ];
-};
-
 const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   const initialMazeExercise =
     MAZE_LEVELS[MAZE_LEVEL_MAP[difficulty]].exercises[0];
@@ -235,12 +287,12 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   const [countdown, setCountdown] = useState<number>(5);
   const [showCountdown, setShowCountdown] = useState<boolean>(false);
   const [appDescripcion, setAppDescripcion] = useState<string>(
-    "Juego de encriptación y desencriptación de mensajes",
+    "Juego de laberinto para practicar pensamiento lógico y secuencias de instrucciones con pseudocódigo",
   );
   const [appFecha, setAppFecha] = useState<string>("2 de Diciembre del 2025");
   const [appVersion, setAppVersion] = useState<string>("1.0");
   const [appPlataformas, setAppPlataformas] = useState<string>("android");
-  const [, setAppAutor] = useState<string>("Valeria C. Z.");
+  const [appAutor, setAppAutor] = useState<string>("Valeria C. Z.");
   const [showInstructions, setShowInstructions] = useState<boolean>(false);
   const [showSummary, setShowSummary] = useState<boolean>(false);
   const [showFeedback, setShowFeedback] = useState<boolean>(false);
@@ -250,7 +302,9 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   );
   const [isComplete, setisComplete] = useState<boolean>(true);
   const [isPaused, setIsPaused] = useState<boolean>(false);
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<MazeFeedback | null>(
+    null,
+  );
   const [score, setScore] = useState<number>(0);
   const [maxScore, setMaxScore] = useState<number>(0);
   const [, setShowExitModal] = useState<boolean>(false);
@@ -268,6 +322,8 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   );
   const [draggedMazeToolId, setDraggedMazeToolId] =
     useState<MazeToolId | null>(null);
+  const [draggedMazeSequenceIndex, setDraggedMazeSequenceIndex] =
+    useState<number | null>(null);
   const [dragOverSlotIndex, setDragOverSlotIndex] = useState<number | null>(
     null,
   );
@@ -291,7 +347,12 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     type: "info" | "success" | "error";
   } | null>(null);
   const [isExecutingMaze, setIsExecutingMaze] = useState<boolean>(false);
+  const [showARModal, setShowARModal] = useState<boolean>(false);
+  const [arTipo, setARTipo] = useState<ARTipo>("inicio");
   const mazeNoticeTimer = useRef<number | null>(null);
+  const feedbackTimer = useRef<number | null>(null);
+  const arConfigRef = useRef<LaberintoRuntimeConfig["ar"]>(undefined);
+  const arOnCloseRef = useRef<(() => void) | null>(null);
   const mazeVisualPositionRef = useRef<MazeVisualPosition>(
     getMazeVisualPositionForCell(
       initialMazeExercise,
@@ -323,6 +384,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
         if (data.descripcion) setAppDescripcion(data.descripcion);
         if (data.plataformas) setAppPlataformas(data.plataformas.join(", "));
         if (data.nombreApp) setAppNombreJuego(data.nombreApp);
+        if (data.ar) arConfigRef.current = data.ar;
       } catch (err) {
         console.error("No se pudo cargar laberinto-config.json", err);
       } finally {
@@ -337,6 +399,10 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     return () => {
       if (mazeNoticeTimer.current !== null) {
         window.clearTimeout(mazeNoticeTimer.current);
+      }
+
+      if (feedbackTimer.current !== null) {
+        window.clearTimeout(feedbackTimer.current);
       }
 
       if (mazeAnimationTimer.current !== null) {
@@ -380,13 +446,13 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     } else if (showCountdown && countdown === 0) {
       setTimeout(() => {
         setShowCountdown(false);
-        startGameLogic();
+        openAR("inicio", startGameLogic);
       }, 500);
     }
   }, [countdown, showCountdown]);
 
   const getInstructions = (): string => {
-    return 'Ordena las instrucciones y asigna los valores correctos para completar el laberinto. Básico otorga 10 puntos, Intermedio 15 puntos y Avanzado 20 puntos. Si una instrucción es incorrecta se indicará cuál es y verás el mensaje "Inténtalo de nuevo".';
+    return 'Ordena las instrucciones y asigna los valores correctos para completar el laberinto.';
   };
 
   const formatRemainingMazeAttempts = (attempts: number) =>
@@ -477,6 +543,33 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     };
   };
 
+  const openAR = (tipo: ARTipo, onClose: () => void) => {
+    const seccion = arConfigRef.current?.[tipo];
+    const hasContent =
+      seccion?.contenido &&
+      Object.values(seccion.contenido).some(
+        (value) => typeof value === "string" && value.trim() !== "",
+      );
+
+    if (seccion?.activo && hasContent) {
+      setARTipo(tipo);
+      arOnCloseRef.current = onClose;
+      setShowARModal(true);
+    } else {
+      onClose();
+    }
+  };
+
+  const waitForAR = (tipo: ARTipo) =>
+    new Promise<void>((resolve) => openAR(tipo, resolve));
+
+  const handleARClose = () => {
+    setShowARModal(false);
+    const cb = arOnCloseRef.current;
+    arOnCloseRef.current = null;
+    cb?.();
+  };
+
   const startGameLogic = () => {
     const config = getGameConfig(difficultyConfig);
     setCurrentExerciseIndex(0);
@@ -490,11 +583,17 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
 
   const endGame = () => {
     setGameActive(false);
-    setShowSummary(true);
+    openAR("fin", () => setShowSummary(true));
   };
 
   const advanceAfterFeedback = (shouldAdvance = true) => {
+    if (feedbackTimer.current !== null) {
+      window.clearTimeout(feedbackTimer.current);
+      feedbackTimer.current = null;
+    }
+
     setShowFeedback(false);
+    setFeedbackMessage(null);
 
     if (!shouldAdvance) {
       const exercise =
@@ -552,6 +651,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
       showSummary ||
       showInstructions ||
       showFeedback ||
+      showARModal ||
       isExecutingMaze ||
       pausado
     )
@@ -568,6 +668,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
       isPaused ||
       showCountdown ||
       showFeedback ||
+      showARModal ||
       showSummary ||
       showInstructions ||
       pausado
@@ -582,6 +683,12 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     setShowExitModal(false);
     setIsPaused(false);
     setPausado(false);
+  };
+
+  const handleFeedbackModalContinue = () => {
+    if (!feedbackMessage || feedbackMessage.type !== "error") return;
+
+    advanceAfterFeedback(feedbackMessage.outOfAttempts);
   };
 
   const resetGame = () => {
@@ -609,6 +716,14 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     resetMazeDragState();
     setShowSummary(false);
     setShowFeedback(false);
+    setFeedbackMessage(null);
+    setShowARModal(false);
+    arOnCloseRef.current = null;
+
+    if (feedbackTimer.current !== null) {
+      window.clearTimeout(feedbackTimer.current);
+      feedbackTimer.current = null;
+    }
   };
 
   const currentGameConfig = getGameConfig(difficultyConfig);
@@ -716,7 +831,11 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   const renderMazeCommandText = (
     block: MazeToolBlock,
     value?: number | null,
-  ) => block.command.replace(block.variable, value ? String(value) : block.variable);
+  ) =>
+    block.command.replace(
+      new RegExp(`\\b${block.variable}\\b`, "g"),
+      value == null ? block.variable : String(value),
+    );
 
   const getMazeCommandDescription = (command: MazeCommand) => {
     const block = getMazeToolById(command.id);
@@ -736,6 +855,26 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     `Instrucción ${slotIndex + 1} incorrecta: ${getMazeCommandDescription(
       command,
     )}. ${trimMazeSentence(detail)}. Inténtalo de nuevo.`;
+
+  const createIncorrectMazeFeedback = (
+    failedInstruction: { command: MazeCommand; slotIndex: number } | null,
+    detail: string,
+    nextAttemptsLeft: number,
+    outOfAttempts: boolean,
+  ): MazeFeedback => ({
+    type: "error",
+    commandText: failedInstruction
+      ? getMazeCommandDescription(failedInstruction.command)
+      : "Lista de instrucciones",
+    detail: trimMazeSentence(detail),
+    instructionNumber: failedInstruction
+      ? failedInstruction.slotIndex + 1
+      : null,
+    outOfAttempts,
+    status: outOfAttempts
+      ? "Sin oportunidades."
+      : `Inténtalo de nuevo. ${formatRemainingMazeAttempts(nextAttemptsLeft)}`,
+  });
 
   const renderMazeCodeBlockContent = (
     block: MazeToolBlock,
@@ -775,8 +914,60 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
 
   const resetMazeDragState = () => {
     setDraggedMazeToolId(null);
+    setDraggedMazeSequenceIndex(null);
     setDragOverSlotIndex(null);
     setIsSequenceDragOver(false);
+  };
+
+  const getMazeSequenceInsertIndex = (
+    entries: Array<{ command: MazeCommand; slotIndex: number }>,
+    preferredIndex?: number,
+  ) =>
+    typeof preferredIndex === "number"
+      ? entries.filter(({ slotIndex }) => slotIndex < preferredIndex).length
+      : entries.length;
+
+  const insertMazeCommandAt = (
+    sequence: MazeSequenceSlot[],
+    command: MazeCommand,
+    preferredIndex?: number,
+  ) => {
+    const entries = getFilledMazeSequenceEntries(sequence);
+    const commands = entries.map(({ command }) => command);
+    const insertIndex = Math.min(
+      Math.max(getMazeSequenceInsertIndex(entries, preferredIndex), 0),
+      commands.length,
+    );
+
+    commands.splice(insertIndex, 0, command);
+    return ensureTrailingEmptyMazeSlot(commands);
+  };
+
+  const moveMazeCommandTo = (
+    sequence: MazeSequenceSlot[],
+    sourceIndex: number,
+    preferredIndex?: number,
+  ) => {
+    const entries = getFilledMazeSequenceEntries(sequence);
+    const sourceCommandIndex = entries.findIndex(
+      ({ slotIndex }) => slotIndex === sourceIndex,
+    );
+
+    if (sourceCommandIndex === -1) {
+      return compactMazeSequence(sequence);
+    }
+
+    const commands = entries.map(({ command }) => command);
+    const [command] = commands.splice(sourceCommandIndex, 1);
+    let insertIndex = getMazeSequenceInsertIndex(entries, preferredIndex);
+
+    if (sourceCommandIndex < insertIndex) {
+      insertIndex -= 1;
+    }
+
+    insertIndex = Math.min(Math.max(insertIndex, 0), commands.length);
+    commands.splice(insertIndex, 0, command);
+    return ensureTrailingEmptyMazeSlot(commands);
   };
 
   const addToolToSequence = (
@@ -787,27 +978,18 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     if (!block) return;
     const command: MazeCommand = { id: block.id, value: null };
 
-    setMazeSequence((prev) => {
-      const next = [...prev];
+    setMazeSequence((prev) =>
+      insertMazeCommandAt(prev, command, preferredIndex),
+    );
+  };
 
-      if (typeof preferredIndex === "number") {
-        while (next.length <= preferredIndex) {
-          next.push(null);
-        }
-
-        next[preferredIndex] = command;
-        return ensureTrailingEmptyMazeSlot(next);
-      }
-
-      const firstEmptyIndex = next.findIndex((slot) => slot === null);
-      if (firstEmptyIndex === -1) {
-        next.push(command);
-        return ensureTrailingEmptyMazeSlot(next);
-      }
-
-      next[firstEmptyIndex] = command;
-      return ensureTrailingEmptyMazeSlot(next);
-    });
+  const moveMazeCommandInSequence = (
+    sourceIndex: number,
+    preferredIndex?: number,
+  ) => {
+    setMazeSequence((prev) =>
+      moveMazeCommandTo(prev, sourceIndex, preferredIndex),
+    );
   };
 
   const updateMazeCommandValue = (slotIndex: number, value: number | null) => {
@@ -827,19 +1009,57 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     setMazeSequence((prev) => {
       const next = [...prev];
       next[slotIndex] = null;
-      return ensureTrailingEmptyMazeSlot(next);
+      return compactMazeSequence(next);
     });
   };
 
-  const readDraggedMazeToolId = (
+  const readDraggedMazeAction = (
     event: React.DragEvent<HTMLElement>,
-  ): MazeToolId | null => {
+  ):
+    | { type: "tool"; toolId: MazeToolId }
+    | { type: "sequence"; sourceIndex: number }
+    | null => {
+    const plainText = event.dataTransfer.getData("text/plain");
+    const sequenceIndexText =
+      event.dataTransfer.getData("application/x-maze-sequence-index") ||
+      (plainText.startsWith("maze-sequence:")
+        ? plainText.replace("maze-sequence:", "")
+        : "") ||
+      (draggedMazeSequenceIndex === null
+        ? ""
+        : String(draggedMazeSequenceIndex));
+    const sequenceIndex = Number.parseInt(sequenceIndexText, 10);
+
+    if (Number.isInteger(sequenceIndex)) {
+      return { type: "sequence", sourceIndex: sequenceIndex };
+    }
+
     const toolId =
       event.dataTransfer.getData("application/x-maze-tool") ||
-      event.dataTransfer.getData("text/plain") ||
+      plainText ||
       draggedMazeToolId;
 
-    return getMazeToolById(toolId)?.id ?? null;
+    const block = getMazeToolById(toolId);
+    if (!block) return null;
+
+    return { type: "tool", toolId: block.id };
+  };
+
+  const applyMazeSequenceDrop = (
+    action:
+      | { type: "tool"; toolId: MazeToolId }
+      | { type: "sequence"; sourceIndex: number }
+      | null,
+    preferredIndex?: number,
+  ) => {
+    if (!action) return;
+
+    if (action.type === "sequence") {
+      moveMazeCommandInSequence(action.sourceIndex, preferredIndex);
+      return;
+    }
+
+    addToolToSequence(action.toolId, preferredIndex);
   };
 
   const handleMazeToolDragStart = (
@@ -850,13 +1070,41 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     event.dataTransfer.setData("application/x-maze-tool", toolId);
     event.dataTransfer.setData("text/plain", toolId);
     setDraggedMazeToolId(toolId);
+    setDraggedMazeSequenceIndex(null);
+  };
+
+  const handleMazeSequenceDragStart = (
+    event: React.DragEvent<HTMLDivElement>,
+    slotIndex: number,
+  ) => {
+    const slot = mazeSequence[slotIndex];
+    const target = event.target;
+
+    if (
+      !slot ||
+      (target instanceof HTMLElement &&
+        Boolean(target.closest("input, button")))
+    ) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(
+      "application/x-maze-sequence-index",
+      String(slotIndex),
+    );
+    event.dataTransfer.setData("text/plain", `maze-sequence:${slotIndex}`);
+    setDraggedMazeSequenceIndex(slotIndex);
+    setDraggedMazeToolId(null);
   };
 
   const handleSequencePanelDragOver = (
     event: React.DragEvent<HTMLDivElement>,
   ) => {
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect =
+      draggedMazeSequenceIndex === null ? "copy" : "move";
     setIsSequenceDragOver(true);
     setDragOverSlotIndex(null);
   };
@@ -875,7 +1123,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
 
   const handleSequencePanelDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    addToolToSequence(readDraggedMazeToolId(event));
+    applyMazeSequenceDrop(readDraggedMazeAction(event));
     resetMazeDragState();
   };
 
@@ -885,7 +1133,8 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect =
+      draggedMazeSequenceIndex === null ? "copy" : "move";
     setIsSequenceDragOver(true);
     setDragOverSlotIndex(slotIndex);
   };
@@ -907,7 +1156,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    addToolToSequence(readDraggedMazeToolId(event), slotIndex);
+    applyMazeSequenceDrop(readDraggedMazeAction(event), slotIndex);
     resetMazeDragState();
   };
 
@@ -943,11 +1192,16 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     setDragOverSlotIndex(slotIndex);
   };
 
-  const dropMazeToolAtPoint = (toolId: MazeToolId, x: number, y: number) => {
+  const dropMazeDragAtPoint = (drag: MazePointerDrag, x: number, y: number) => {
     const { panelElement, slotIndex } = getMazeDropTargetFromPoint(x, y);
     if (!panelElement) return;
 
-    addToolToSequence(toolId, slotIndex ?? undefined);
+    if (drag.type === "sequence" && typeof drag.sourceIndex === "number") {
+      moveMazeCommandInSequence(drag.sourceIndex, slotIndex ?? undefined);
+      return;
+    }
+
+    addToolToSequence(drag.toolId, slotIndex ?? undefined);
   };
 
   const handleMazeToolPointerDown = (
@@ -958,7 +1212,9 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
 
     event.currentTarget.setPointerCapture(event.pointerId);
     setDraggedMazeToolId(toolId);
+    setDraggedMazeSequenceIndex(null);
     setMazePointerDrag({
+      type: "tool",
       toolId,
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -969,8 +1225,42 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     });
   };
 
-  const handleMazeToolPointerMove = (
-    event: React.PointerEvent<HTMLButtonElement>,
+  const handleMazeSequencePointerDown = (
+    event: React.PointerEvent<HTMLDivElement>,
+    slotIndex: number,
+  ) => {
+    const slot = mazeSequence[slotIndex];
+    const target = event.target;
+
+    if (
+      event.pointerType === "mouse" ||
+      event.button !== 0 ||
+      !slot ||
+      (target instanceof HTMLElement &&
+        Boolean(target.closest("input, button")))
+    ) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDraggedMazeSequenceIndex(slotIndex);
+    setDraggedMazeToolId(null);
+    setMazePointerDrag({
+      type: "sequence",
+      toolId: slot.id,
+      command: slot,
+      pointerId: event.pointerId,
+      sourceIndex: slotIndex,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+    });
+  };
+
+  const handleMazePointerMove = (
+    event: React.PointerEvent<HTMLElement>,
   ) => {
     if (!mazePointerDrag || mazePointerDrag.pointerId !== event.pointerId) {
       return;
@@ -995,8 +1285,8 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     });
   };
 
-  const handleMazeToolPointerUp = (
-    event: React.PointerEvent<HTMLButtonElement>,
+  const handleMazePointerUp = (
+    event: React.PointerEvent<HTMLElement>,
   ) => {
     if (!mazePointerDrag || mazePointerDrag.pointerId !== event.pointerId) {
       return;
@@ -1008,19 +1298,15 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
 
     if (mazePointerDrag.active) {
       event.preventDefault();
-      dropMazeToolAtPoint(
-        mazePointerDrag.toolId,
-        event.clientX,
-        event.clientY,
-      );
+      dropMazeDragAtPoint(mazePointerDrag, event.clientX, event.clientY);
     }
 
     setMazePointerDrag(null);
     resetMazeDragState();
   };
 
-  const handleMazeToolPointerCancel = (
-    event: React.PointerEvent<HTMLButtonElement>,
+  const handleMazePointerCancel = (
+    event: React.PointerEvent<HTMLElement>,
   ) => {
     if (!mazePointerDrag || mazePointerDrag.pointerId !== event.pointerId) {
       return;
@@ -1136,28 +1422,16 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
 
     for (const { command, slotIndex } of commands) {
       const value = command.value ?? 0;
+      const block = getMazeToolById(command.id);
 
-      if (command.id === "turn-left" || command.id === "turn-right") {
-        const turn = command.id === "turn-left" ? "left" : "right";
-
-        direction = turnMazeDirection(direction, turn);
-        setMazeRuntime({
-          row,
-          col,
-          direction,
-          action: command.id,
-          visited,
-          message:
-            turn === "left"
-              ? "Girando a la izquierda"
-              : "Girando a la derecha",
-        });
-        await sleep(MAZE_TURN_DELAY_MS);
-
-        if (!(await walkMazeSteps(value, command, slotIndex))) break;
-
-        continue;
+      if (!block) {
+        success = false;
+        failedInstruction = { command, slotIndex };
+        resultMessage = "La instruccion no existe";
+        break;
       }
+
+      direction = block.direction;
 
       if (!(await walkMazeSteps(value, command, slotIndex))) break;
     }
@@ -1174,7 +1448,10 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
         action: "jumping",
         message: "Meta alcanzada",
       }));
-      setFeedbackMessage(`Correcto! +${points} puntos`);
+      setFeedbackMessage({
+        type: "success",
+        message: `Correcto! +${points} puntos`,
+      });
       await sleep(MAZE_JUMP_DELAY_MS);
     } else {
       failedInstruction ??= commands[commands.length - 1] ?? null;
@@ -1201,11 +1478,12 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
         message: failureMessage,
       }));
       setFeedbackMessage(
-        shouldAdvance
-          ? `${failureMessage} Sin oportunidades.`
-          : `${failureMessage} ${formatRemainingMazeAttempts(
-              nextAttemptsLeft,
-            )}`,
+        createIncorrectMazeFeedback(
+          failedInstruction,
+          failureDetail,
+          nextAttemptsLeft,
+          shouldAdvance,
+        ),
       );
     }
 
@@ -1216,9 +1494,16 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
     setShowFeedback(true);
     setIsExecutingMaze(false);
 
-    window.setTimeout(() => {
-      advanceAfterFeedback(shouldAdvanceAfterFeedback);
-    }, MAZE_RESULT_DELAY_MS);
+    if (success && reachedGoal) {
+      feedbackTimer.current = window.setTimeout(() => {
+        feedbackTimer.current = null;
+        setShowFeedback(false);
+        setFeedbackMessage(null);
+        void waitForAR("acierto").then(() =>
+          advanceAfterFeedback(shouldAdvanceAfterFeedback),
+        );
+      }, MAZE_RESULT_DELAY_MS);
+    }
   };
 
   return (
@@ -1229,9 +1514,55 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
         </div>
       )}
 
-      {showFeedback && (
-        <div className="feedback-overlay">
-          <div className="feedback-text">{feedbackMessage}</div>
+      {showFeedback && feedbackMessage && (
+        <div className={`feedback-overlay feedback-overlay--${feedbackMessage.type}`}>
+          {feedbackMessage.type === "success" ? (
+            <div className="feedback-text">{feedbackMessage.message}</div>
+          ) : (
+            <div
+              aria-labelledby="feedback-error-title"
+              aria-modal="true"
+              className="feedback-card feedback-card--error"
+              role="dialog"
+            >
+              <div className="feedback-card-header">
+                <IonIcon icon={alertCircleOutline} />
+                <span>Revisa esta instrucción</span>
+              </div>
+
+              <h2 id="feedback-error-title">
+                {feedbackMessage.instructionNumber
+                  ? `Instrucción ${feedbackMessage.instructionNumber} incorrecta`
+                  : "Secuencia incorrecta"}
+              </h2>
+
+              {/* <div className="feedback-command-box">
+                <span className="feedback-label">Comando usado</span>
+                <code>{feedbackMessage.commandText}</code>
+              </div> */}
+
+              <div className="feedback-reason-box">
+                {/* <span className="feedback-label">Motivo</span> */}
+                <p>{feedbackMessage.detail}</p>
+              </div>
+
+              {/* <div
+                className={`feedback-status${
+                  feedbackMessage.outOfAttempts ? " is-final" : ""
+                }`}
+              >
+                {feedbackMessage.status}
+              </div> */}
+
+              <IonButton
+                className="feedback-action"
+                expand="block"
+                onClick={handleFeedbackModalContinue}
+              >
+                {feedbackMessage.outOfAttempts ? "Continuar" : "Intentar de nuevo"}
+              </IonButton>
+            </div>
+          )}
         </div>
       )}
 
@@ -1361,6 +1692,10 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                 <p className="data">{appVersion}</p>
               </div>
               <div className="card">
+                <p className="title">AUTOR</p>
+                <p className="data">{appAutor}</p>
+              </div>
+              <div className="card">
                 <p className="title">FECHA DE CREACIÓN</p>
                 <p className="data">{appFecha}</p>
               </div>
@@ -1372,12 +1707,6 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                 <p className="title">NÚMERO DE EJERCICIOS</p>
                 <p className="data">
                   {currentGameConfig.totalExercises}
-                </p>
-              </div>
-              <div className="card">
-                <p className="title">OPORTUNIDADES POR LABERINTO</p>
-                <p className="data">
-                  {currentGameConfig.attemptsPerExercise}
                 </p>
               </div>
               <div className="card description">
@@ -1431,6 +1760,15 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
             </IonButton>
           </div>
         </div>
+      )}
+
+      {showARModal && (
+        <ARModal
+          tipo={arTipo}
+          contenido={arConfigRef.current?.[arTipo]?.contenido ?? {}}
+          fondo={arConfigRef.current?.[arTipo]?.fondo}
+          onClose={handleARClose}
+        />
       )}
 
       <IonContent fullscreen className="ion-padding">
@@ -1567,7 +1905,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                   <div className="pseudocode-line">
                     <span className="pseudocode-line-number">1</span>
                     <code>
-                      <span className="pseudocode-keyword">INICIO</span>
+                      <span className="pseudocode-keyword">Algoritmo</span>
                     </code>
                   </div>
 
@@ -1582,14 +1920,25 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                           dragOverSlotIndex === index ? " is-drag-over" : ""
                         }`}
                         data-maze-sequence-slot={index}
+                        draggable={Boolean(slot)}
                         key={index}
+                        onDragEnd={() => resetMazeDragState()}
                         onDragLeave={handleSequenceSlotDragLeave}
+                        onDragStart={(event) =>
+                          handleMazeSequenceDragStart(event, index)
+                        }
                         onDragOver={(event) =>
                           handleSequenceSlotDragOver(event, index)
                         }
                         onDrop={(event) =>
                           handleSequenceSlotDrop(event, index)
                         }
+                        onPointerCancel={handleMazePointerCancel}
+                        onPointerDown={(event) =>
+                          handleMazeSequencePointerDown(event, index)
+                        }
+                        onPointerMove={handleMazePointerMove}
+                        onPointerUp={handleMazePointerUp}
                       >
                         <span className="pseudocode-line-number">
                           {index + 2}
@@ -1624,7 +1973,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                       {mazeSequence.length + 2}
                     </span>
                     <code>
-                      <span className="pseudocode-keyword">FIN</span>
+                      <span className="pseudocode-keyword">FinAlgoritmo</span>
                     </code>
                   </div>
                 </div>
@@ -1646,12 +1995,12 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                       onDragStart={(event) =>
                         handleMazeToolDragStart(event, block.id)
                       }
-                      onPointerCancel={handleMazeToolPointerCancel}
+                      onPointerCancel={handleMazePointerCancel}
                       onPointerDown={(event) =>
                         handleMazeToolPointerDown(event, block.id)
                       }
-                      onPointerMove={handleMazeToolPointerMove}
-                      onPointerUp={handleMazeToolPointerUp}
+                      onPointerMove={handleMazePointerMove}
+                      onPointerUp={handleMazePointerUp}
                       type="button"
                     >
                       {renderMazeCodeBlockContent(block)}
@@ -1670,7 +2019,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                         const position = { row: rowIndex, col: colIndex };
                         const cellType =
                           cell === "#"
-                            ? "empty"
+                            ? "wall"
                             : cell === "S"
                               ? "start"
                               : cell === "E"
@@ -1698,9 +2047,9 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                     )}
                     <img
                       alt="Personaje"
-                      className={`maze-character maze-character--${mazeRuntime.direction}`}
+                      className={`maze-character maze-character--${mazeRuntime.direction} maze-character--${mazeRuntime.action}`}
                       draggable={false}
-                      src={MAZE_CHARACTER_GIFS[mazeRuntime.action]}
+                      src={getMazeCharacterGif(mazeRuntime)}
                       style={mazeCharacterStyle}
                     />
                   </div>
@@ -1727,7 +2076,10 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                       top: `${mazePointerDrag.y}px`,
                     }}
                   >
-                    {renderMazeCodeBlockContent(previewBlock)}
+                    {renderMazeCodeBlockContent(
+                      previewBlock,
+                      mazePointerDrag.command?.value,
+                    )}
                   </div>
                 );
               })()
@@ -1743,6 +2095,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                   showFeedback ||
                   showSummary ||
                   showInstructions ||
+                  showARModal ||
                   pausado ||
                   activeButtonIndex !== null ||
                   !isComplete ||
@@ -1763,6 +2116,7 @@ const Home: React.FC<PlayProps> = ({ difficulty = "basic" }) => {
                   isPaused ||
                   showCountdown ||
                   showFeedback ||
+                  showARModal ||
                   showSummary ||
                   showInstructions ||
                   pausado

@@ -1,0 +1,26 @@
+{
+    "nivel": "intermedio",
+    "ar": {
+        "inicio": {
+            "activo": true,
+            "contenido": {
+                "texto": "Prepara la ruta del laberinto",
+                "imagen": "/assets/personaje_saludando.gif"
+            }
+        },
+        "acierto": {
+            "activo": true,
+            "contenido": {
+                "texto": "Ruta correcta",
+                "imagen": "/assets/personaje_brincando.gif"
+            }
+        },
+        "fin": {
+            "activo": true,
+            "contenido": {
+                "texto": "Laberinto completado",
+                "imagen": "/assets/personaje_caminar_derecha.gif"
+            }
+        }
+    }
+}

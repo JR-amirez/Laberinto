@@ -1,0 +1,12 @@
+{
+	"appId": "io.laberinto.steam",
+	"appName": "Laberinto",
+	"webDir": "dist",
+	"packageClassList": [
+		"AppPlugin",
+		"HapticsPlugin",
+		"KeyboardPlugin",
+		"ScreenOrientationPlugin",
+		"StatusBarPlugin"
+	]
+}
